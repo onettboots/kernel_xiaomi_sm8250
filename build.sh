@@ -26,30 +26,23 @@ export CC=$HOME/toolchains/boolx-clang/bin/clang
 CLANG_DIR="$HOME/toolchains/boolx-clang"
 CLANG="${CLANG_DIR}/bin:$PATH"
 CLANG_BIN="${CLANG}/bin/"
-TARGET_IMAGE="Image.gz-dtb"
+TARGET_IMAGE="Image.gz"
 cpus=`expr $(nproc --all)`
 objdir="${kernel_dir}/out"
 CONFIGS="vendor/alioth_defconfig"
 
-VER="V1-N0base"
 KERNEL_DIR=`pwd`
 REPACK_DIR=$HOME/AnyKernel3alioth
 ZIP_MOVE=$HOME/Boolx
-BASE_AK_VER="Bool-X-Alioth-"
-DATE=`date +"%Y%m%d-%H%M"`
-AK_VER="$BASE_AK_VER$VER"
-ZIP_NAME="$AK_VER"-"$DATE"
 TOOLCHAINS=$HOME/toolchains/boolx-clang
 CONFIG=out/.config
-KERNEL=out/arch/arm64/boot/Image.gz-dtb
+KERNEL=out/arch/arm64/boot/Image.gz
 DTBO=out/arch/arm64/boot/dtbo.img
-
+DTB=out/arch/arm64/boot/dtb
 #functions
 function makeconfig() {
                 PATH=${CLANG_BIN}:${PATH} \
                 make -s -j${cpus} \
-                LLVM=1 \
-                LLVM_IAS=1 \
                 CC="ccache clang" \
                 CROSS_COMPILE="aarch64-linux-gnu-" \
                 CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
@@ -60,14 +53,15 @@ function build() {
 		PATH=${CLANG_BIN}:${PATH} \
 		make -s -j${cpus} \
 		LLVM=1 \
-		LLVM_IAS=1 \
-		CC="ccache clang" \
-		CROSS_COMPILE="aarch64-linux-gnu-" \
-		CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
+                LLVM_IAS=1 \
+                CC="ccache clang" \
+                CROSS_COMPILE="aarch64-linux-gnu-" \
+                CROSS_COMPILE_ARM32="arm-linux-gnueabi-" \
 		O="${objdir}" ${1} \
 		KBUILD_BUILD_USER="Onett" \
 		KBUILD_BUILD_HOST="Boots" \
-		dtbo.img
+		dtbo.img \
+		dtb
 }
 
 function create_out {
@@ -81,13 +75,14 @@ function clean_all {
 		make -s clean
 		make -s -j${cpus} mrproper O=${objdir}
 		rm -rf out
+		git restore drivers/input/touchscreen/*
 }
 function make_config {
 		echo
 		makeconfig ${CONFIGS}
 }
 function make_boot {
-		cp $KERNEL $REPACK_DIR && cp $DTBO $REPACK_DIR
+		cp $KERNEL $REPACK_DIR && cp $DTBO $REPACK_DIR && cp $DTB $REPACK_DIR
 }
 function make_zip {
 		cd $REPACK_DIR
@@ -96,11 +91,16 @@ function make_zip {
 		cd $KERNEL_DIR
 }
 
+function restore_miui {
+		cd $KERNEL_DIR
+                git restore arch/arm64/boot/dts/vendor/qcom/dsi-panel-k11a-38-08-0a-dsc-cmd.dtsi
+}
+
 function upload()
 {
 curl bashupload.com -T $ZIP_NAME*.zip
 ziped=$ZIP_MOVE/`echo $ZIP_NAME`.zip
-sed -i "4i\FILE_PATH=$ziped" $HOME/bool/upl.sh
+sed -i "4i\FILE_PATH=$ziped" $PWD/upl.sh
 BUILDDATE=`date +"%Y-%m-%d"`
 sed -i '5i\CAPTION="Build Date: '$BUILDDATE' | Type: KSU, AOSP"' $HOME/bool/upl.sh
 }
@@ -162,6 +162,35 @@ else
    create_out
    echo -e "${restore}"
 fi
+echo -e "${green}"
+echo "------------------"
+echo "CHOOSE VARIANT:"
+echo "------------------"
+while read -p "Do you want build MIUI or AOSP? (MIUI/AOSP): " variant
+do
+case "$variant" in
+        MIUI )
+            echo -e "${red}"
+                sed -i 's/qcom,mdss-pan-physical-width-dimension = <70>;$/qcom,mdss-pan-physical-width-dimension = <700>;/' arch/arm64/boot/dts/vendor/qcom/dsi-panel-k11a-38-08-0a-dsc-cmd.dtsi
+    		sed -i 's/qcom,mdss-pan-physical-height-dimension = <155>;$/qcom,mdss-pan-physical-height-dimension = <1540>;/' arch/arm64/boot/dts/vendor/qcom/dsi-panel-k11a-38-08-0a-dsc-cmd.dtsi
+                break
+                ;;
+        AOSP )
+                restore_miui
+                break
+                ;;
+        * )
+                echo -e "${red}"
+                echo "Invalid try again!"
+                echo -e "${restore}"
+                ;;
+esac
+done
+
+BASE_AK_VER="Bool-X-Alioth-V1-RKbase-"
+DATE=`date +"%Y%m%d-%H%M"`
+AK_VER="$BASE_AK_VER$variant"
+ZIP_NAME="$AK_VER"-"$DATE"
 
 echo -e "${green}"
 echo "------------------"
@@ -271,6 +300,7 @@ if [ -f $KERNEL ]; then
    echo -e "${restore}"
    build_time
    upload
+   restore_miui
    echo
 else
    echo -e "${red}"
@@ -279,6 +309,7 @@ else
    echo "-------------------------------------"
    echo -e "${restore}"
    build_time
+   restore_miui
 fi
 
 echo
